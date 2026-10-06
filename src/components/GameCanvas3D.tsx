@@ -2,8 +2,11 @@ import * as THREE from 'three'
 import { useEffect, useRef, useState } from 'react'
 import { useGame } from '../game/store'
 import { audio } from '../game/audio'
+import '../design/luxe.css'
 import { ThreeWorld } from '../three/world3d'
 import { TILE, MAP_W, MAP_H } from '../game/types'
+import { HeroRig } from '../three/hero'
+import { FX } from '../three/fx'
 
 export function GameCanvas3D(){
   const engine=useGame(s=>s.engine)
@@ -11,9 +14,18 @@ export function GameCanvas3D(){
   const bump=useGame(s=>s.bump)
   const canvasRef=useRef<HTMLCanvasElement>(null)
   const worldRef=useRef<ThreeWorld|null>(null)
+  const heroMode=useGame(s=>s.heroMode)
+  const heroFps=useGame(s=>s.heroFps)
+  const [skillCd, setSkillCd]=useState<{slash:number;kaboom:number;rally:number}>({slash:0,kaboom:0,rally:0})
   const [drag, setDrag]=useState<{active:boolean; x:number;y:number; x2:number;y2:number}|null>(null)
   const dragRef=useRef<{active:boolean; x:number;y:number; x2:number;y2:number}|null>(null)
   const placeRef=useRef<{tx:number;ty:number}|null>(null)
+  const heroRef=useRef<HeroRig|null>(null)
+  const fxRef=useRef<FX|null>(null)
+  const keysRef=useRef<Set<string>>(new Set())
+  const mouseDXRef=useRef(0)
+  const mouseDYRef=useRef(0)
+  const pointerLockedRef=useRef(false)
 
   // init 3D world once
   useEffect(()=>{
@@ -21,10 +33,32 @@ export function GameCanvas3D(){
     const world=new ThreeWorld(c)
     world.attachEngine(engine)
     worldRef.current=world
+    const fx=new FX(world.scene); fxRef.current=fx
+    const hero=new HeroRig(world.scene); heroRef.current=hero; hero.bind(engine)
+    // wire FX events from engine hero skills -> pretty slash/kaboom
+    const onSlash=(e:any)=>{ const p=e.detail; const pos=new THREE.Vector3(p.x/TILE, .6, p.y/TILE); const dir=new THREE.Vector3(Math.cos(p.facing),0,Math.sin(p.facing)); fx.slash(pos, dir, 0xff4a8a); fx.hitRing(pos, 0xffcc66) }
+    const onKaboom=(e:any)=>{ const p=e.detail; const pos=new THREE.Vector3(p.x/TILE,.4,p.y/TILE); fx.kaboom(pos, 2.6) }
+    const onKaboomShake=()=>{ world.shake=7 }
+    document.addEventListener('hero-slash', onSlash as any)
+    document.addEventListener('hero-kaboom', onKaboom as any)
+    document.addEventListener('kaboom', onKaboomShake as any)
+    // rebind hero on seed change will be handled by rebuild effect
     const ro=new ResizeObserver(()=>{ world.resize() })
     ro.observe(c)
     world.resize()
-    return ()=>{ ro.disconnect(); world.renderer.dispose() }
+    // wrap applyDamage for combat FX
+    const origApply = engine.applyDamage.bind(engine)
+    engine.applyDamage = (target:any, dmg:any, attacker:any)=>{
+      const hp0=target.hp
+      const res=origApply(target,dmg,attacker)
+      const fx=fxRef.current; if(!fx) return res
+      const pos=new THREE.Vector3(target.x/TILE, .7, target.y/TILE)
+      fx.damageNumber(pos, dmg)
+      if(dmg>22) fx.hitRing(new THREE.Vector3(target.x/TILE,.08,target.y/TILE), 0xff6a3a)
+      void hp0
+      return res
+    }
+    return ()=>{ ro.disconnect(); world.renderer.dispose(); engine.applyDamage=origApply as any; document.removeEventListener('hero-slash', (()=>{}) as any); document.removeEventListener('hero-kaboom', (()=>{}) as any) }
   },[])
 
   // rebuild when mission restarts (when engine seed changes)
@@ -32,6 +66,7 @@ export function GameCanvas3D(){
     if(!worldRef.current) return
     worldRef.current.attachEngine(engine)
     worldRef.current.rebuildFromTiles()
+    heroRef.current?.bind(engine)
   }, [engine.seed])
 
   // game loop + sync + render
@@ -39,11 +74,41 @@ export function GameCanvas3D(){
     let raf=0, last=performance.now()
     const loop=(now:number)=>{
       const dt=Math.min(0.05,(now-last)/1000); last=now
+      // hero intent when heroMode & pointer lock or joystick
+      if(useGame.getState().heroMode){
+        const hero=heroRef.current; const world=worldRef.current as any
+        if(hero && world){
+          hero.intent(engine, keysRef.current, mouseDXRef.current, mouseDYRef.current, dt)
+          mouseDXRef.current*=0.92; mouseDYRef.current*=0.92
+          // tether camera to hero
+          const h=hero.getHero(engine)
+          if(h){
+            const tx=h.x/TILE, tz=h.y/TILE
+            if(hero.third){
+              // third-person chase behind hero
+              hero.pitch = hero.pitch // keep
+              const yaw=hero.yaw
+              const dist=hero.camDist
+              const behindX=tx - Math.cos(yaw)*dist*0.55
+              const behindZ=tz - Math.sin(yaw)*dist*0.55
+              world.camTarget.x += (behindX - world.camTarget.x)*Math.min(1,dt*4.5)
+              world.camTarget.z += (behindZ - world.camTarget.z)*Math.min(1,dt*4.5)
+              world.camYaw = yaw + Math.PI // look toward hero? instead orbit behind
+              world.camPitch = 0.52
+              world.camDist = hero.third? (heroFps? 3.5 : 11) : 9
+              if(heroFps){ world.camTarget.set(tx, 1.05, tz); world.camYaw=yaw; world.camPitch=hero.pitch }
+            }
+          }
+        }
+        // tick skill cds
+        setSkillCd(s=>({ slash: Math.max(0,s.slash-dt), kaboom: Math.max(0,s.kaboom-dt), rally: Math.max(0,s.rally-dt)}))
+      }
       engine.update(dt)
       const world=worldRef.current
       if(world){
+        // hit FX on applyDamage: monkey-patch once per frame? Instead sample hp drops
+        ;(engine as any)._fxHook = fxRef.current
         world.sync(dt)
-        // drag overlay is DOM, but sync camera before render
         world.render()
       }
       bump()
@@ -74,6 +139,10 @@ export function GameCanvas3D(){
     dragRef.current=d; setDrag(d as any)
   }
   const handleMouseMove=(e:React.MouseEvent)=>{
+    if(useGame.getState().heroMode && document.pointerLockElement){
+      mouseDXRef.current += e.movementX; mouseDYRef.current += e.movementY
+      return
+    }
     const hit=groundFromClient(e.clientX,e.clientY)
     if(hit && placingBuilding){ placeRef.current={tx:hit.tx, ty:hit.ty} }
     if(dragRef.current?.active && hit){
@@ -175,8 +244,12 @@ export function GameCanvas3D(){
     if(e.touches.length<2){ const w=worldRef.current as any; if(w){ w._lastPinch=null; w._lastMid=null } }
   }
 
-  // keyboard
+  // keyboard + hero keys tracking
   useEffect(()=>{
+    const onKeyDown=(ev:KeyboardEvent)=>{ keysRef.current.add(ev.key.toLowerCase()) }
+    const onKeyUp=(ev:KeyboardEvent)=>{ keysRef.current.delete(ev.key.toLowerCase()) }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
     const h=(ev:KeyboardEvent)=>{
       const world=worldRef.current; if(!world) return
       const k=ev.key.toLowerCase()
@@ -200,8 +273,11 @@ export function GameCanvas3D(){
       }
       if(k===' ') engine.paused=!engine.paused
     }
+    const onJoy=(e:any)=>{ const {dx,dy}=e.detail; const set=keysRef.current; set.clear(); if(dy<-0.2) set.add('w'); if(dy>0.2) set.add('s'); if(dx<-0.2) set.add('a'); if(dx>0.2) set.add('d'); // diagonal via both
+    }
+    document.addEventListener('hero-joy', onJoy as any)
     window.addEventListener('keydown',h)
-    return ()=> window.removeEventListener('keydown',h)
+    return ()=>{ window.removeEventListener('keydown',h); document.removeEventListener('hero-joy', onJoy as any) }
   },[placingBuilding])
 
   // move marker (simple expanding ring in 3D via smoke group)

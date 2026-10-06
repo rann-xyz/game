@@ -2,6 +2,7 @@
 // Owns renderer, scene, camera, world. Engine drives logic, this draws it.
 import * as THREE from 'three'
 import { createSoldierMesh, createBuildingMesh, createTreeVariant, createRock, updateSoldierAnim } from './assets'
+import { makeGrassTuft, makeStoneScatter } from '../design/props'
 import type { GameEngine } from '../game/engine'
 import { TILE, MAP_W, MAP_H, WORLD_W, WORLD_H } from '../game/types'
 import { BUILDING_STATS } from '../game/balance'
@@ -35,6 +36,10 @@ export class ThreeWorld {
   tmpVec2 = new THREE.Vector2()
   tmpVec3 = new THREE.Vector3()
 
+  // open-world panorama
+  distantMountains: THREE.Group | null = null
+  cloudGroup: THREE.Group | null = null
+
   constructor(canvas: HTMLCanvasElement){
     this.canvas = canvas
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' })
@@ -43,17 +48,18 @@ export class ThreeWorld {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.15
+    this.renderer.toneMappingExposure = 1.18
 
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(0x8ec8e8)
-    this.scene.fog = new THREE.Fog(0x9ad0e8, 55, 95)
+    this.scene.fog = new THREE.Fog(0x9ad0e8, 62, 140)
 
-    this.camera = new THREE.PerspectiveCamera(48, 1, 0.1, 300)
+    this.camera = new THREE.PerspectiveCamera(52, 1, 0.1, 500)
     this.camera.position.set(0, 20, 0)
 
     this.buildStatic()
     this.setupLights()
+    this.buildPanorama()
   }
 
   private setupLights(){
@@ -109,6 +115,34 @@ export class ThreeWorld {
 
     this.scene.add(this.smokeGroup)
     this.scene.add(this.hitGroup)
+  }
+
+  private buildPanorama(){
+    // distant mountain ring — sells open world
+    const g=new THREE.Group()
+    for(let i=0;i<28;i++){
+      const a=i/28*Math.PI*2
+      const dist=72+Math.random()*18
+      const h=14+Math.random()*12
+      const w=14+Math.random()*10
+      const peak=new THREE.Mesh(new THREE.ConeGeometry(w*0.6, h, 7), new THREE.MeshStandardMaterial({color:0x8aa0b8, roughness:.9}))
+      peak.position.set(Math.cos(a)*dist, h*0.3-2, Math.sin(a)*dist)
+      peak.scale.set(1,1,0.7); g.add(peak)
+      const base=new THREE.Mesh(new THREE.CylinderGeometry(w*0.55,w*0.75,h*0.6,7), new THREE.MeshStandardMaterial({color:0x5a6a7a})); base.position.set(Math.cos(a)*dist, h*0.18-1, Math.sin(a)*dist); g.add(base)
+    }
+    this.scene.add(g); this.distantMountains=g
+    // clouds drift
+    const cg=new THREE.Group()
+    for(let i=0;i<9;i++){
+      const cl=new THREE.Group()
+      for(let j=0;j<3;j++){
+        const puff=new THREE.Mesh(new THREE.SphereGeometry(2.2+Math.random()*1.4,7,6), new THREE.MeshStandardMaterial({color:0xffffff, transparent:true, opacity:.52}))
+        puff.position.set((Math.random()-.5)*3,(Math.random()-.5)*.6,(Math.random()-.5)*3); cl.add(puff)
+      }
+      cl.position.set((Math.random()-.5)*90, 26+Math.random()*6, (Math.random()-.5)*90)
+      ;(cl as any)._drift=(Math.random()-.5)*0.04; cg.add(cl)
+    }
+    this.scene.add(cg); this.cloudGroup=cg
   }
 
   attachEngine(engine: GameEngine){
@@ -197,6 +231,16 @@ export class ThreeWorld {
         const s=new THREE.Mesh(new THREE.PlaneGeometry(0.98,0.98), new THREE.MeshStandardMaterial({ color: 0x6a5a3a, roughness:0.95 })); s.rotation.x=-Math.PI/2; s.position.set(x+0.5, 0.02, y+0.5); (s as any)._decor=true; this.terrain.add(s)
         // road line
         const line=new THREE.Mesh(new THREE.PlaneGeometry(0.14,0.98), new THREE.MeshStandardMaterial({ color: 0xc0b090 })); line.rotation.x=-Math.PI/2; line.position.set(x+0.5,0.025,y+0.5); (line as any)._decor=true; this.terrain.add(line)
+      }
+    }
+    // luxe ground dressing — grass tufts on plains + stone scatter on hills, sells real vista
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const tt=engine.tiles[y][x]
+      if(tt.terrain==='plains' && !tt.resource && Math.random()<0.10){
+        const g=makeGrassTuft(); g.position.set(x+0.22+Math.random()*0.56, 0.02, y+0.22+Math.random()*0.56); g.rotation.y=Math.random()*Math.PI; (g as any)._decor=true; this.terrain.add(g)
+      }
+      if((tt.terrain==='hill' || tt.terrain==='plains') && Math.random()<0.035){
+        const s=makeStoneScatter(); s.position.set(x+0.3+Math.random()*0.4, 0.04 + (tt.height*0.55), y+0.3+Math.random()*0.4); s.rotation.y=Math.random()*Math.PI*2; (s as any)._decor=true; this.terrain.add(s)
       }
     }
     // village props
@@ -385,7 +429,8 @@ export class ThreeWorld {
       ring.visible = !!engine.explored[Math.floor(cp.y/TILE)]?.[Math.floor(cp.x/TILE)]
     }
 
-    // tick smoke pool
+    // tick smoke + clouds drift (open world life)
+    if(this.cloudGroup){ for(const cl of this.cloudGroup.children){ cl.position.x += ((cl as any)._drift||0)*dt*6; if(cl.position.x>48) cl.position.x=-48; if(cl.position.x<-48) cl.position.x=48 } }
     for(const c of [...this.smokeGroup.children]){
       c.position.y += dt*0.35; c.position.x += (Math.random()-0.5)*dt*0.2
       ;(c as any)._life = ((c as any)._life||1) - dt*0.45

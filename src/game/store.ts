@@ -14,6 +14,8 @@ interface State {
   skirmishSeed: number
   skirmishDiff: Difficulty
   selectedCampaignMission: number
+  heroMode: boolean
+  heroFps: boolean
   // actions
   startSkirmish: (seed:number,diff:Difficulty)=>void
   startCampaignMission: (id:number)=>void
@@ -40,6 +42,8 @@ export const useGame = create<State>((set,get)=>({
   skirmishSeed: 777,
   skirmishDiff: 'normal',
   selectedCampaignMission: 1,
+  heroMode: false,
+  heroFps: false,
   startSkirmish(seed,diff){
     const e=get().engine
     e.startSkirmish(seed,diff)

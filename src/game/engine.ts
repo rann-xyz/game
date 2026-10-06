@@ -799,6 +799,53 @@ export class GameEngine {
     }
   }
 
+  // ── Hero skill (called from UI) — empowers the hero
+  doHeroSkill(kind: 'slash'|'kaboom'|'rally'){
+    const hero=this.units.find(u=>(u as any).isHero && u.team==='player' && u.state!=='dead')
+    if(!hero) return false
+    if(kind==='slash'){
+      // cone slash: damage nearby enemies + FX event
+      let hit=0
+      for(const e of this.units){
+        if(e.team==='player'||e.state==='dead') continue
+        const d=Math.hypot(e.x-hero.x,e.y-hero.y)
+        if(d<96){
+          const ang=Math.atan2(e.y-hero.y, e.x-hero.x)
+          let dd=Math.abs(ang-hero.facing); dd=Math.atan2(Math.sin(dd),Math.cos(dd)); dd=Math.abs(dd)
+          if(dd<0.95) { this.applyDamage(e, Math.max(12, hero.damage*1.8 - e.armor), hero); this.spawnParticles(e.x,e.y,6,'blood'); hit++ }
+        }
+      }
+      this.spawnParticles(hero.x, hero.y, 10, 'spark')
+      this.camera.shake=Math.max(this.camera.shake, hit?5:2)
+      this.notify(hit? `SLASH! ${hit} hit` : 'Slash!')
+      // notify 3D FX via custom event (world listens)
+      if(typeof document!=='undefined') document.dispatchEvent(new CustomEvent('hero-slash',{detail:{x:hero.x,y:hero.y,facing:hero.facing}}))
+      return true
+    }
+    if(kind==='kaboom'){
+      let hit=0
+      for(const e of this.units){
+        if(e.team==='player'||e.state==='dead') continue
+        if(Math.hypot(e.x-hero.x,e.y-hero.y)<140){ this.applyDamage(e, Math.max(22, hero.damage*2.2 - e.armor*0.6), hero); this.spawnParticles(e.x,e.y,10,'fire'); hit++ }
+      }
+      for(const b of [...this.buildings]) if(b.team==='enemy' && Math.hypot(b.x*32+16-hero.x, b.y*32+16-hero.y)<150){ b.hp-=48; this.spawnParticles(b.x*32+16,b.y*32+16,12,'fire'); if(b.hp<=0) this.destroyBuilding(b); hit++ }
+      this.spawnParticles(hero.x, hero.y, 18, 'fire')
+      this.camera.shake=9
+      if(typeof document!=='undefined') document.dispatchEvent(new CustomEvent('hero-kaboom',{detail:{x:hero.x,y:hero.y}}))
+      this.notify(`KABOOM! ${hit} targets`)
+      return true
+    }
+    if(kind==='rally'){
+      let n=0
+      for(const u of this.units){ if(u.team==='player'&&u.state!=='dead'&&Math.hypot(u.x-hero.x,u.y-hero.y)<220){ u.morale=Math.min(100,u.morale+28); u.supply=Math.min(100,u.supply+22); n++ } }
+      this.spawnParticles(hero.x, hero.y, 12, 'smoke')
+      this.notify(`Rally! ${n} allies inspired`)
+      if(typeof document!=='undefined') document.dispatchEvent(new CustomEvent('hero-rally',{detail:{x:hero.x,y:hero.y}}))
+      return true
+    }
+    return false
+  }
+
   notify(text:string){ this.notifications.push({id:nid('n'),text,t: this.time}) }
 
   // ── Camera ──
