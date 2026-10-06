@@ -1,5 +1,5 @@
 import { useGame } from './game/store'
-import { GameCanvas } from './components/GameCanvas'
+import { GameCanvas3D } from './components/GameCanvas3D'
 import { HUD } from './components/HUD'
 import { Minimap } from './components/Minimap'
 import { MainMenu } from './components/MainMenu'
@@ -9,7 +9,7 @@ export default function App(){
   return (
     <div className="app">
       <div className="game-wrap">
-        <GameCanvas />
+        <GameCanvas3D />
         {phase!=='menu' && <HUD />}
         {phase!=='menu' && <div className="minimap-wrap"><Minimap /></div>}
         <MainMenu />
