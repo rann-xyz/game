@@ -33,6 +33,7 @@ export class GameEngine {
   explored: boolean[][]=[]
   supplyTimer=0
   aiTimer=0
+  capturePoints: {x:number;y:number;r:number;team:Team;progress:number}[]=[]
   stats={ kills:0, losses:0, buildingsDestroyed:0, buildingsLost:0, resourcesGathered:{gold:0,wood:0,stone:0,food:0} as Resources, startTime:Date.now()}
   paused=false
   victory=false; defeat=false
@@ -88,6 +89,13 @@ export class GameEngine {
     for(let i=0;i<2;i++) this.spawnUnit('archer','enemy',63*TILE+i*20,47*TILE)
     this.spawnUnit('lightCav','enemy',65*TILE,50*TILE)
     // neutral resources already on map via world gen; add extra
+    // capture points: center + two flanks
+    const cx=Math.floor(MAP_W/2), cy=Math.floor(MAP_H/2)
+    this.capturePoints=[
+      {x:cx*TILE,y:cy*TILE,r:42,team:'neutral' as Team,progress:0},
+      {x:(cx-9)*TILE,y:(cy+5)*TILE,r:36,team:'neutral' as Team,progress:0},
+      {x:(cx+9)*TILE,y:(cy-6)*TILE,r:36,team:'neutral' as Team,progress:0},
+    ]
     this.notify(`Mission ${m.id}: ${m.title} — ${m.brief}`)
   }
 
@@ -279,6 +287,7 @@ export class GameEngine {
     this.updateParticles(dt)
     this.updateTech(dt)
     this.updateSupply(dt)
+    this.updateCapture(dt)
     this.updateAI(dt)
     this.checkVictory()
     // notifications timeout
@@ -362,11 +371,7 @@ export class GameEngine {
       u.x=Math.max(8,Math.min(WORLD_W-8,u.x)); u.y=Math.max(8,Math.min(WORLD_H-8,u.y))
     }
     // remove dead after delay? keep for a tick to show
-    this.units=this.units.filter(u=> !(u.state==='dead' && u.hp<=0 && Math.random()<0.02) || true) // keep dead visible for now; we set state dead but not removed immediately
-    // actually remove dead that have been dead for a bit: use hp <=0 and state dead -> remove after particles
-    // we mark dead hp<=0; keep in array until cleared next frame if hp<=0
-    // To avoid immediate removal, keep them for visual but don't update
-    // We'll filter strictly: if hp<=0 state dead -> will be removed after 1 sec via particle life; for now keep but skip logic already.
+    // dead units stay visible; kept but skipped at top of loop (array bounded <120 in practice)
   }
 
   updateWorker(u:Unit, dt:number){
@@ -379,10 +384,12 @@ export class GameEngine {
       if(depot){
         const dx=depot.x - u.x, dy=depot.y - u.y, d=Math.hypot(dx,dy)
         if(d< 28){
-          // deposit
+          // deposit — only player resources matter for gameplay; enemy gathering is visual
           const amt=u.carryAmount
-          this.resources[u.carryType!]+=amt
-          if(u.team==='player') this.stats.resourcesGathered[u.carryType!]+=amt
+          if(u.team==='player'){
+            this.resources[u.carryType!]+=amt
+            this.stats.resourcesGathered[u.carryType!]+=amt
+          }
           u.carryAmount=0; u.carryType=undefined
           u.gatherCooldown=0
           // find next resource
@@ -562,6 +569,7 @@ export class GameEngine {
       target.hp=0; target.state='dead'
       this.spawnParticles(target.x,target.y,8,'blood')
       this.spawnParticles(target.x,target.y,6,'dust')
+      if(target.team==='player') this.pop=Math.max(0,this.pop-1)
       if(target.team==='enemy') this.stats.kills++
       else { this.stats.losses++; if(target.team==='player') this.notify(`${target.type} fallen`) }
       // morale ripple
@@ -614,9 +622,10 @@ export class GameEngine {
         continue
       }
       const mv=p.speed*dt
-      // arc
+      // arc diminishes for close targets (prevents miss at melee range)
+      const arcScale = Math.min(1, d/80)
       const t = d/ (p.speed*0.5)
-      const arcOff = p.arc * Math.sin(Math.min(1,t)*Math.PI) * 0.5
+      const arcOff = p.arc * arcScale * Math.sin(Math.min(1,t)*Math.PI) * 0.5
       p.x+= dx/d*mv
       p.y+= dy/d*mv - arcOff*dt*8
       next.push(p)
@@ -752,16 +761,33 @@ export class GameEngine {
     }
   }
 
+  updateCapture(dt:number){
+    for(const cp of this.capturePoints){
+      let pc=0, ec=0
+      for(const u of this.units){ if(u.state==='dead') continue; if(Math.hypot(u.x-cp.x,u.y-cp.y)<cp.r+14){ if(u.team==='player') pc++; else if(u.team==='enemy') ec++ } }
+      if(pc>0 && ec===0){
+        if(cp.team!=='player'){ cp.progress=Math.min(100, cp.progress+ dt*22); if(cp.progress>=100){ cp.team='player'; cp.progress=100; this.notify('Territory captured!'); this.spawnParticles(cp.x,cp.y,12,'dust'); this.resources.gold+=80; this.resources.wood+=40 } }
+      } else if(ec>0 && pc===0){
+        if(cp.team!=='enemy'){ cp.progress=Math.min(100, cp.progress+ dt*22); if(cp.progress>=100){ cp.team='enemy'; cp.progress=100; this.notify('Enemy captured territory!') } }
+      } else if(pc===0 && ec===0){
+        // decay contested capture slightly
+        if(cp.team==='neutral' && cp.progress>0) cp.progress=Math.max(0, cp.progress- dt*8)
+      } else {
+        // contested — stall
+      }
+    }
+  }
   checkVictory(){
     const playerCC=this.buildings.filter(b=>b.team==='player'&&b.type==='commandCenter').length
     const enemyCC=this.buildings.filter(b=>b.team==='enemy'&&b.type==='commandCenter').length
     if(playerCC===0){ this.defeat=true; this.paused=true; this.notify('DEFEAT — Command Center lost') }
     else if(enemyCC===0){ this.victory=true; this.paused=true; this.notify('VICTORY — Enemy Command Center destroyed!') }
     else {
-      // objective check
+      // objective check — only auto-complete if targetId is actually set
       for(const o of this.objectives){
         if(o.done||o.failed) continue
         if(o.type==='destroy'){
+          if(!o.targetId) continue // generic "destroy enemy CC" is handled by CC count above, not instant win
           const t=this.buildings.find(b=>b.id===o.targetId) || this.units.find(u=>u.id===o.targetId)
           if(!t) o.done=true
         } else if(o.type==='capture'){

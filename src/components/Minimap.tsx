@@ -45,6 +45,13 @@ export function Minimap(){
       const px=(u.x/WORLD_W)*W, py=(u.y/WORLD_H)*H
       ctx.beginPath(); ctx.arc(px,py, u.team==='player'?2.2:1.8,0,Math.PI*2); ctx.fill()
     }
+    // capture points
+    for(const cp of (engine as unknown as {capturePoints:{x:number;y:number;team:string}[]}).capturePoints||[]){
+      const px=(cp.x/WORLD_W)*W, py=(cp.y/WORLD_H)*H
+      ctx.fillStyle= cp.team==='player'? '#5aa0ff' : cp.team==='enemy'? '#ff3a2a':'#c0b040'
+      ctx.beginPath(); ctx.arc(px,py,3.5,0,Math.PI*2); ctx.fill()
+      ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(px,py,6,0,Math.PI*2); ctx.stroke()
+    }
     // camera rect
     const cam=engine.camera
     const rx=(cam.x/WORLD_W)*W, ry=(cam.y/WORLD_H)*H, rw=( (W / cam.zoom)/ (WORLD_W) *W) , rh=( (H/ cam.zoom)/ (WORLD_H)*H)

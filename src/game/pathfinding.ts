@@ -9,17 +9,36 @@ export function findPath(
 ): Vec2[] {
   if(sx===tx && sy===ty) return []
   if(tx<0||tx>=MAP_W||ty<0||ty>=MAP_H) return []
-  const blocked = new Set<string>()
-  for(const b of buildings){
-    for(let dx=0;dx<b.w;dx++) for(let dy=0;dy<b.h;dy++) blocked.add(`${b.x+dx},${b.y+dy}`)
-  }
-  const isBlocked=(x:number,y:number)=>{
+  // clamp goal off blocked terrain: search nearest free tile
+  function isBlockedRaw(x:number,y:number, blocked:Set<string>){
     if(x<0||x>=MAP_W||y<0||y>=MAP_H) return true
-    if(blocked.has(`${x},${y}`)) return false // allow goal tile even if blocked? no
+    if(blocked.has(`${x},${y}`)) return true
     const t=grid[y][x].terrain
     if(t==='mountain'||t==='water') return true
     return false
   }
+  const blocked = new Set<string>()
+  for(const b of buildings){
+    for(let dx=0;dx<b.w;dx++) for(let dy=0;dy<b.h;dy++) blocked.add(`${b.x+dx},${b.y+dy}`)
+  }
+  // if goal blocked, find closest free tile (BFS radius 6)
+  if(isBlockedRaw(tx,ty,blocked)){
+    let best:{x:number;y:number;d:number}|null=null
+    for(let r=1;r<=6;r++){
+      for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+        const nx=tx+dx, ny=ty+dy
+        if(nx<0||nx>=MAP_W||ny<0||ny>=MAP_H) continue
+        if(!isBlockedRaw(nx,ny,blocked)){
+          const d=Math.abs(dx)+Math.abs(dy)
+          if(!best||d<best.d) best={x:nx,y:ny,d}
+        }
+      }
+      if(best) break
+    }
+    if(best){ tx=(best as {x:number;y:number}).x; ty=(best as {x:number;y:number}).y } else return []
+  }
+  if(sx===tx && sy===ty) return []
+  const isBlocked=(x:number,y:number)=> isBlockedRaw(x,y,blocked)
   // BFS/A* 
   const open:{x:number;y:number;g:number;h:number;f:number;parent?:{x:number;y:number}}[]=[]
   const closed=new Set<string>()

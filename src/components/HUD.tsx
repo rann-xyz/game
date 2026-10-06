@@ -25,6 +25,7 @@ export function HUD(){
           <span className="stone">⬢ {res.stone|0}</span>
           <span className="food">⚑ {res.food|0}</span>
           <span className="pop">☷ {engine.pop}/{engine.popCap}</span>
+          <span className="terr">⛳ {(engine as unknown as {capturePoints:{team:string}[]}).capturePoints?.filter((c:{team:string})=>c.team==='player').length||0}/{(engine as unknown as {capturePoints:unknown[]}).capturePoints?.length||0}</span>
         </div>
         <div className="time">{Math.floor(engine.time/60)}:{String(Math.floor(engine.time%60)).padStart(2,'0')} {engine.paused?'⏸':''}</div>
         <div className="actions">

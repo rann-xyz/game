@@ -133,9 +133,6 @@ export function GameCanvas(){
       const enemyB=engine.buildings.find(b=>b.team==='enemy'&& x>=b.x*TILE&&x<=b.x*TILE+b.w*TILE&& y>=b.y*TILE&&y<=b.y*TILE+b.h*TILE)
       if(enemy){ engine.issueAttack(enemy.id); audio.attack() }
       else if(enemyB){ // attack building via nearest unit
-        const sel=engine.units.filter(u=>engine.selectedIds.has(u.id))
-        for(const u of sel) { u.targetId=enemyB.id; /* attackBuilding will pick */ }
-        // set direct path to building
         engine.issueMove(enemyB.x*TILE+enemyB.w*TILE/2, enemyB.y*TILE+enemyB.h*TILE/2, false)
         engine.units.filter(u=>engine.selectedIds.has(u.id)).forEach(u=>u.targetId=enemyB.id)
         audio.attack()

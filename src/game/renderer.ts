@@ -83,6 +83,24 @@ export function renderGame(ctx:CanvasRenderingContext2D, engine:GameEngine, canv
     ctx.strokeStyle='rgba(0,0,0,0.08)'; ctx.lineWidth=0.5; ctx.strokeRect(x,y,TILE,TILE)
   }
 
+  // capture points
+  for(const cp of (engine as unknown as {capturePoints:{x:number;y:number;r:number;team:string;progress:number}[]}).capturePoints||[]){
+    const vis = engine.explored[(cp.y/TILE)|0]?.[(cp.x/TILE)|0]
+    if(!vis) continue
+    const teamCol = cp.team==='player'? 'rgba(60,160,255,0.22)' : cp.team==='enemy'? 'rgba(255,60,60,0.22)':'rgba(180,160,60,0.18)'
+    ctx.fillStyle=teamCol; ctx.beginPath(); ctx.arc(cp.x, cp.y, cp.r, 0, Math.PI*2); ctx.fill()
+    ctx.strokeStyle= cp.team==='player'? '#5aa0ff' : cp.team==='enemy'? '#ff5a3a':'#c0b040'
+    ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.beginPath(); ctx.arc(cp.x,cp.y,cp.r,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([])
+    // progress ring when contested
+    if(cp.team==='neutral' && cp.progress>0){
+      ctx.strokeStyle='rgba(90,200,255,0.9)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(cp.x,cp.y,cp.r, -Math.PI/2, -Math.PI/2 + Math.PI*2*cp.progress/100); ctx.stroke()
+    }
+    // flag
+    ctx.fillStyle= cp.team==='player'? '#2a7ae0': cp.team==='enemy'? '#c03018':'#8a7a20'
+    ctx.fillRect(cp.x-1, cp.y-cp.r-14, 2, 18)
+    ctx.fillStyle= cp.team==='player'? '#5aa0ff': cp.team==='enemy'? '#ff6a4a':'#d0c040'
+    ctx.fillRect(cp.x+1, cp.y-cp.r-14, 14, 10)
+  }
   // buildings
   for(const b of engine.buildings){
     const tx=b.x*TILE, ty=b.y*TILE, w=b.w*TILE, h=b.h*TILE
